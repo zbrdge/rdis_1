@@ -1,2 +1,0 @@
-recdasm : recdasm.c
-	cc -ldasm -ggdb recdasm.c -o recdasm

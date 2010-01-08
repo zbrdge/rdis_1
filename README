@@ -1,0 +1,21 @@
+Fri Jan  8 10:36:06 UTC 2010
+----------------------------
+
+The intention of this project is to create a useful, freely available, and current reverse
+engineering tool (with a BSD license). One major inspiration for this work came from
+the paper "Static Disassembly of Obfuscated Binaries", which can be found at:
+
+	http://www.usenix.org/events/sec04/tech/kruegel.html
+
+Right now it is still in the earliest possible stage, it has only been built on Linux x64,
+so far, with GCC version 4.4.1, and using the POSIX thread library to implement the first
+stages of multi-threading. Some future plans include:
+
+	1) Graphviz dot file output (hopefully with a single function)
+	2) An extension of libdasm to support x64
+	3) Heuristics for recognising all sorts of specific "code signatures" to help
+	   in graph construction
+	4) Automatic parsing of ELF, PE, and maybe other binary formats, for
+	   determining entry points and other calculations which may be of
+	   importance. Right now it just starts at zero.
+	5) A program that Just Works (much testing, fuzzing, profiling, general improvement).

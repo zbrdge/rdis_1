@@ -15,6 +15,7 @@
  *
  *    To Do: 
  *    ------
+ *       - Fix memory handling of large linked list
  *       - Add more heuristics for function search
  *       - Add graphviz output
  *       - Add ability to parse object/executable files
@@ -31,17 +32,16 @@
 
 
    
-unsigned char * read_file(int *len, char *name);
-
 int main( int argc, char **argv ) {
-	BYTE *data, *end;
-	int format = FORMAT_ATT, size, i;
+
+	int format = FORMAT_INTEL;
 	BLOCK *blk, *bptr;
 	FUNCTION *fl;
 	char str[256];
+	struct stat sstat;
 
-	CFG *cfg = allocate_cfg();
 
+	/****************************************************************/ 
 	if ( argc<2 ) {
 		printf("Usage: %s <file> [-a|-i]\n"
 			"  file    file to be disassembled (required)\n"
@@ -62,59 +62,27 @@ int main( int argc, char **argv ) {
 					break;
 			}
 		}
-		
-	data = read_file(&size, argv[1]);
-	end =  data + size;
+	
+	/****************************************************************/ 
 
-	fl = identify_functions(data, end);
-	disassemble(fl->block->addr, cfg, fl);
+	fl = identify_functions( (char *)argv[1] );
 
-	while (fl->next != NULL) {
+	/*disassemble(fl->block->addr, cfg, fl);*/
+
+	while (fl->prev != NULL) fl=fl->prev;
+
+	while (1) {
 		blk = fl->block;
-		while (blk->next != NULL) {
-			get_instruction_string(blk->inst, format, (DWORD)(blk->addr - data), str, sizeof(str));
-			printf("%08x:\t%s\n",blk->addr, str);
-			blk = blk->next;
+
+		while (1) {
+			get_instruction_string(blk->inst, format, (DWORD) 0, str, sizeof(str));
+			printf("%08x:\t%s\t%x\n", (unsigned char)blk->addr, str, blk->inst->opcode);
+			if (blk->next == NULL) break;
+			else blk = blk->next;
 		}
-		fl = fl->next;
+		if (fl->next == NULL) break; 
+		else fl = fl->next;
 	}
-}
 
-
-/*
- *    From das.c, libdasm sample:
- */
-unsigned char * read_file(int *len, char *name) {
-        char            *buf;
-        FILE            *fp;
-        int             c;
-        struct stat     sstat;
-
-        if ((fp = fopen(name, "r+b")) == NULL) {
-                fprintf(stderr,"Error: unable to open file \"%s\"\n", name);
-                exit(0);
-        }
-
-        /* Get file len */
-        if ((c = stat(name, &sstat)) == -1) {
-                fprintf(stderr,"Error: stat\n");
-                exit (1);
-        }
-        *len = sstat.st_size;
-
-        /* Allocate space for file */
-        if (!(buf = (char *)malloc(*len))) {
-                fprintf(stderr,"Error: malloc\n");
-                exit (1);
-        }
-
-        /* Read file in allocated space */
-        if ((c = fread(buf, 1, *len, fp)) != *len) {
-                fprintf(stderr,"Error: fread\n");
-                exit (1);
-        }
-
-        fclose(fp);
-
-        return (buf);
+	function_list_cleanup( fl );
 }

@@ -1,15 +1,15 @@
+#ifndef _RDIS_H
+#define _RDIS_H
+
 #define RDMODE MODE_32
 
-#ifndef _RECDASM_H
-#define _RECDASM_H
+// NOTE: UGLY CASTS FROM DWORD* TO BYTE*
 
 typedef struct basic_block {
-        void *block; // to distinguish from a function
 	BYTE * addr;
 	INSTRUCTION *inst;
 	struct basic_block *prev, *next;
 } BLOCK ;
-
 
 
 typedef struct function {
@@ -28,12 +28,16 @@ typedef struct control_flow_graph {  // an adjacency list
 
 
 // Prototypes.
-
+void function_list_cleanup(
+	FUNCTION *fl
+);
+FUNCTION * heuristic_dispatch( 
+	char *filename, unsigned int entry
+);
 FUNCTION * allocate_function( 
-	BYTE * start 
 );
 FUNCTION * identify_functions(
-	BYTE * start, BYTE * end
+	char *filename
 );
 BYTE *  start_addr_of(
 	BLOCK *block 
@@ -48,16 +52,15 @@ BYTE *  get_region_end(
 	void *f, int type
 );
 BLOCK * get_block_of(
-	INSTRUCTION *inst, BYTE * addr, FUNCTION *func
+	INSTRUCTION *inst, DWORD *addr, FUNCTION *func
 );
 BLOCK * split_block(
 	BLOCK *current, BYTE * addr
 );
 BLOCK * allocate_block(
-	BYTE * start
 );
 BLOCK * disassemble(
-	unsigned char * addr, CFG *cfg, FUNCTION *func
+	DWORD *addr, CFG *cfg, FUNCTION *func
 );
 int has_no_instructions(
 	BLOCK *block
@@ -76,13 +79,29 @@ int connect_to(
 );
 CFG * allocate_cfg(
 );
+unsigned int find_text_seg(
+	char *filename;
+);
+INSTRUCTION * allocate_inst(
+);
 
 
-FUNCTION * identify_functions( BYTE *start, BYTE *end ) {
 
-	FUNCTION *fl = allocate_function(start);
+unsigned int find_text_seg( char *filename ) {
+	// Why not use off_t for the entry point?
+	// Would any file ever have an entry outside max off_t?
+	return 0; // Later -- parse ELF/PE/Other Executable Types
+}
 
-	heuristic_prologue( fl, end ); // search for common prologues
+
+FUNCTION * identify_functions( char *filename ) {
+
+	FUNCTION *fl;
+
+	unsigned int entry_point = find_text_seg(filename);
+
+	fl = (FUNCTION *) heuristic_dispatch( filename, entry_point );
+
 	// heuristic_local_calls( fl, end ); // search for calls in our text segment
 	// heuristic_...
 	// heuristic_elim_single( fl, end ); // only keep duplicates
@@ -97,7 +116,7 @@ return fl;
 
 
 
-BLOCK * disassemble( BYTE * addr, CFG *cfg, FUNCTION *func ) {
+BLOCK * disassemble( DWORD *addr, CFG *cfg, FUNCTION *func ) {
 	BLOCK *block, *current;
         BYTE *target, *fstart, *fend;
 	INSTRUCTION inst;
@@ -106,17 +125,18 @@ BLOCK * disassemble( BYTE * addr, CFG *cfg, FUNCTION *func ) {
         fstart = get_region_start (func, 0);
         fend = get_region_end (func, 0);
 	
-	current = allocate_block (addr);
+	current = allocate_block ();
+	current->addr = (BYTE *)addr;
  
         /* From the paper: */
 
-	while ( addr < fend ) {
-		get_instruction (&inst, addr, RDMODE);
+	while ( addr < (DWORD *)fend ) {
+		get_instruction (&inst, (BYTE *)addr, RDMODE);
 	
 		if ( (block=get_block_of(&inst, addr, func))!=NULL ) {
 			
-			if ( addr != get_region_start(block, 1) ) {
-				block = split_block(block, addr);
+			if ( addr != (DWORD *)get_region_start(block, 1) ) {
+				block = split_block(block, (BYTE *)addr);
 				if (block == NULL) {
 					perror("Address not actually in block.\n");
 					return(NULL);
@@ -133,13 +153,13 @@ BLOCK * disassemble( BYTE * addr, CFG *cfg, FUNCTION *func ) {
 		} 
 		
 		else {
-			block_add_instruction(current, &inst, addr);
+			block_add_instruction(current, &inst, (BYTE *)addr);
 			
 			if ( is_control_transfer(&inst) ) {
 				target = get_target_of(&inst);
 				
 				if ((fstart <= target) && (target<fend)) {
-					block = disassemble(target, cfg, func);
+					block = disassemble((DWORD *)target, cfg, func);
 					connect_to(cfg, current, block);
 				}
               
@@ -175,14 +195,15 @@ return ptr->addr;
 
 BYTE *  get_target_of( INSTRUCTION *inst ) {
 
-	BYTE * immed, *disp;
+	BYTE *immed;
+	DWORD disp;
 
 	if ( get_operand_type (&inst->op1) != OPERAND_TYPE_NONE ) { 
-		get_operand_immediate ( &inst->op1, &immed );
+		get_operand_immediate ( &inst->op1, (DWORD *)immed );
 		get_operand_displacement ( &inst->op1, &disp );
 	}
    
-return  immed += (int)disp;
+return  immed += disp;
 }
 
 
@@ -259,7 +280,7 @@ BYTE *  get_region_end( void *f, int type ) {
 
 
 
-BLOCK * get_block_of( INSTRUCTION *inst, BYTE * addr, FUNCTION *func ) { // get basic block by instruction or address
+BLOCK * get_block_of( INSTRUCTION *inst, DWORD *addr, FUNCTION *func ) { // get basic block by instruction or address
 
 	BLOCK *bptr;
 	FUNCTION *f = func;
@@ -273,7 +294,7 @@ BLOCK * get_block_of( INSTRUCTION *inst, BYTE * addr, FUNCTION *func ) { // get 
 	
 		while ( f->next!=NULL ) {
 			while ( bptr->next!=NULL ) {
-				if ( bptr->addr == addr )
+				if ( bptr->addr == (BYTE *)addr )
 					return bptr;
 				else
 					bptr = bptr->next;
@@ -321,8 +342,8 @@ BLOCK * split_block( BLOCK *current, BYTE * addr ) {
 		return NULL;
 	}
 
-	BLOCK *new_block = allocate_block( addr );
-    
+	BLOCK *new_block = allocate_block();
+   	new_block->addr = addr; 
 	new_block->inst = current->inst;
 	new_block->prev = NULL;
 	new_block->next = current->next;
@@ -352,7 +373,8 @@ return 1;
 
 
 int block_add_instruction ( BLOCK *block, INSTRUCTION *inst, BYTE * addr ) {
-	block->next = allocate_block(addr);
+	block->next = allocate_block();
+	block->next->addr = addr;
 	block->next->inst = inst;	
 return 0;
 }
@@ -405,7 +427,7 @@ int connect_to (  CFG *cfg,  BLOCK *block1,  BLOCK *block2 ) {
 		cptr=cptr->next;
 	}
 
-	cptr->neighbors->next = allocate_function(NULL);
+	cptr->neighbors->next = allocate_function();
 	cptr->neighbors->next->block = block2;		// Add block2 to block1's list of neighbor nodes
 	
 	// Rewind
@@ -422,40 +444,36 @@ int connect_to (  CFG *cfg,  BLOCK *block1,  BLOCK *block2 ) {
 		cptr=cptr->next;
 	}
 	
-	cptr->neighbors->next = allocate_function(NULL);
+	cptr->neighbors->next = allocate_function();
 	cptr->neighbors->next->block = block1;		// Add block1 to block2's list of neighbor nodes
 
 return 0;
 }
 
 
-BLOCK * allocate_block( BYTE * start ) {
+BLOCK * allocate_block() {
 	BLOCK *b;
 	if ( (b=malloc(sizeof(BLOCK))) == NULL ) {
 		perror("Error allocating BLOCK structure..\n");
 		return(NULL);
 	} else {
-		b->addr = start;
+		b->addr = NULL;
 		b->prev = NULL;
 		b->next = NULL;
-		b->block = NULL;
-		if ( (b->inst = malloc(sizeof(INSTRUCTION))) == NULL) {
-			perror("Error allocation INSTRUCTION structure..\n");
-			return(NULL);
-		}
+		b->inst = NULL;
 	}
 return b;
 }
 
 
-FUNCTION * allocate_function( BYTE * start ) {
+FUNCTION * allocate_function() {
 	FUNCTION *f;
 
 	if ( (f=malloc(sizeof(FUNCTION))) == NULL ) {
 		perror("Error allocating FUNCTION structure..\n");
 		return(NULL);
 	} else {
-		f->block = allocate_block(start);
+		f->block = NULL;
 		f->edge = 0;
 		f->prev = NULL;
 		f->next = NULL;
@@ -472,13 +490,48 @@ CFG * allocate_cfg() {
 		perror("Error allocating CFG structure..\n");
 		return(NULL);
 	} else {
-		c->node = allocate_block(NULL);
-		c->neighbors = allocate_function(NULL);
+		c->node = allocate_block();
+		c->neighbors = allocate_function();
 		c->prev = NULL;
 		c->next = NULL;
 	}
 return c;
 }
 
+
+
+INSTRUCTION * allocate_inst() {
+	INSTRUCTION * I;
+	if ( (I = malloc(sizeof(INSTRUCTION))) == NULL) {
+		perror("Error allocating INSTRUCTION structure..\n");
+		return(NULL);
+	}
+	return I;
+}
+
+
+
+void function_list_cleanup( FUNCTION *fl ) {
+	BLOCK *blk;
+	while (fl->next != NULL) fl=fl->next;
+	while (fl->prev != NULL) {
+		blk = fl->block;
+		while (blk->next != NULL) blk=blk->next;
+		while (blk->prev != NULL) {
+			if (blk->inst != NULL) free(blk->inst);
+			blk=blk->prev;
+		}
+		if (blk->inst != NULL) free(blk->inst);
+		fl = fl->prev;
+		free(blk);
+		free(fl->next);	
+	}
+	if (fl->block != NULL) {
+		if (fl->block->inst != NULL)
+			free(fl->block->inst);
+		free(fl->block);
+	}
+	free(fl);
+}
 
 #endif
